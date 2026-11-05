@@ -9,7 +9,6 @@ name: launcher
 # already exists is not built again; bump the version for the next release.
 #   gh workflow run launcher                              # dry run: build everything, publish nothing
 #   gh workflow run launcher -f dry_run=false             # publish now
-
 on:
   push:
     branches: [main]
@@ -29,7 +28,6 @@ concurrency:
 
 env:
   HORIZON_TELEMETRY_URL: "off"
-
 jobs:
   meta:
     runs-on: ubuntu-latest
@@ -68,7 +66,6 @@ jobs:
             echo "build=$build"
             echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
-
   build:
     needs: meta
     if: needs.meta.outputs.build == 'true'
@@ -156,7 +153,11 @@ jobs:
           echo "$out"
           [[ "$out" == "horizon-launcher $VERSION" ]] || { echo "::error::expected horizon-launcher $VERSION"; exit 1; }
       - name: Package
-                  set -euo pipefail
+        env:
+          MAC_ARCH: ${{ matrix.mac_arch }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
           rm -rf out dist
           mkdir -p out dist
 
@@ -177,19 +178,23 @@ jobs:
           fi
 
           if [[ "$RUNNER_OS" == "Windows" && "${{ matrix.name }}" == "windows" ]]; then
+            # Preserve the standalone executable included in the original Windows artifact.
             cp "$BIN/${{ matrix.binary }}" out/horizon-launcher.exe
 
+            # Create a separate extract-and-run portable archive.
             mkdir -p dist/portable
             cp "$BIN/${{ matrix.binary }}" dist/portable/horizon-launcher.exe
-
             : > dist/portable/portable.txt
 
             printf '%s\n' \
               'Horizon-Free Plus Portable' \
               '' \
-              '1. Extract anywhere.' \
+              '1. Extract this ZIP anywhere.' \
               '2. Keep portable.txt beside horizon-launcher.exe.' \
               '3. Run horizon-launcher.exe.' \
+              '' \
+              'Portable mode uses the portable.txt marker.' \
+              'Launcher-managed data is stored in the data folder.' \
               > dist/portable/README-PORTABLE.txt
 
             (
@@ -200,6 +205,34 @@ jobs:
           fi
 
           ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: launcher/out/*
+          if-no-files-found: error
+          retention-days: 3
+  release:
+    needs: [meta, build]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort |
+            while read -r f; do sha256sum "$f"; done > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          {
             echo "Horizon Launcher (free) $VERSION, built automatically from main."
             echo
             echo "Changes:"
@@ -207,8 +240,8 @@ jobs:
             echo "- Offline play enabled by default, in the window and the CLI: no Microsoft account that owns the game is required to launch."
             echo "- No Microsoft sign-in plates in the interface."
             echo "- Horizon-Free button in the sidebar, above the Discord button."
-            echo "- Launcher self-updates from 0CYBER/horizon-free (tags launcher@X.Y.Z)."
-            echo "- Launcher self-update signature check disabled for fork releases."
+            echo "- Automatic launcher self-updates are disabled; install launcher updates manually."
+            echo "- Windows x64 portable ZIP includes portable.txt and a portable-mode README."
             echo "- README warning preserved."
             echo
             echo "Downloads still need an account that owns Minecraft: the fork starts the game from your own assets."
