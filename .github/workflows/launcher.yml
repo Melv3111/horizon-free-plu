@@ -177,10 +177,31 @@ jobs:
             fi
           fi
           if [[ "$RUNNER_OS" == "Windows" && "${{ matrix.name }}" == "windows" ]]; then
-            # The bare executable, as earlier releases shipped it (x64 only: both Windows
-            # builds produce a file named horizon-launcher.exe).
-            cp "$BIN/${{ matrix.binary }}" out/horizon-launcher.exe
-          fi
+    cp "$BIN/${{ matrix.binary }}" out/horizon-launcher.exe
+
+    mkdir -p dist/portable
+
+    cp "$BIN/${{ matrix.binary }}" dist/portable/horizon-launcher.exe
+
+    : > dist/portable/portable.txt
+
+    cat > dist/portable/README-PORTABLE.txt <<'EOF'
+Horizon-Free Plus Portable
+
+1. Extract this folder anywhere.
+2. Keep portable.txt beside horizon-launcher.exe.
+3. Run horizon-launcher.exe.
+
+Portable mode uses the portable.txt marker.
+Launcher-managed data is stored in the data folder.
+EOF
+
+    (
+        cd dist/portable
+        7z a "../../out/horizon-launcher-windows-x64-portable.zip" \
+            horizon-launcher.exe portable.txt README-PORTABLE.txt > /dev/null
+    )
+fi
           ls -l out
       - uses: actions/upload-artifact@v4
         with:

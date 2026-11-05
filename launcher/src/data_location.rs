@@ -28,13 +28,64 @@ struct Location {
     version: u32,
     roots: Roots,
 }
+fn executable_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+}
+
+fn portable_dir() -> Option<PathBuf> {
+    let dir = executable_dir()?;
+
+    if dir.join("portable.txt").is_file() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+pub fn is_portable() -> bool {
+    portable_dir().is_some()
+}
+
+fn portable_roots() -> Result<Option<Roots>> {
+    let Some(dir) = portable_dir() else {
+        return Ok(None);
+    };
+
+    let data = dir.join("data");
+
+    let roots = Roots {
+        launcher: data.join("launcher"),
+        game: data.join("game"),
+        build: data.join("build"),
+    };
+
+    let roots = validate_roots(&roots)?;
+
+    for root in [&roots.launcher, &roots.game, &roots.build] {
+        fs::create_dir_all(root).map_err(|e| problem(root, e))?;
+    }
+
+    let roots = validate_roots(&roots)?;
+
+    Ok(Some(roots))
+}
 
 pub fn bootstrap_path() -> Result<PathBuf> {
-    // Portable installs and tests can keep their location pointer separate from the user profile.
     if let Some(path) = std::env::var_os("HORIZON_LAUNCHER_LOCATION_FILE").filter(|p| !p.is_empty())
     {
         return pointer_path(Path::new(&path));
     }
+
+    if let Some(dir) = portable_dir() {
+        return pointer_path(
+            &dir.join("data")
+                .join(".portable-state")
+                .join("location.json"),
+        );
+    }
+
     dirs::config_dir()
         .map(|p| p.join("horizon-launcher-location").join("location.json"))
         .ok_or_else(|| "Cannot locate the platform configuration folder for location.json".into())
@@ -77,18 +128,27 @@ pub fn configured_roots() -> Result<Option<Roots>> {
     if FORCE_DEFAULT.load(Ordering::Acquire) {
         return Ok(None);
     }
+
     let mut slot = location();
+
     if slot.is_none() {
+        let resolve_bootstrap = || bootstrap_path().and_then(|path| resolve_at(&path));
+
         let resolved = if overridden("HORIZON_LAUNCHER_HOME") && overridden("HORIZON_HOME") {
             Ok(None)
-        } else {
-            match bootstrap_path() {
-                Ok(bootstrap) => resolve_at(&bootstrap),
+        } else if !overridden("HORIZON_LAUNCHER_LOCATION_FILE") {
+            match portable_roots() {
+                Ok(Some(roots)) => Ok(Some(roots)),
+                Ok(None) => resolve_bootstrap(),
                 Err(error) => Err(error),
             }
+        } else {
+            resolve_bootstrap()
         };
+
         *slot = Some(resolved);
     }
+
     slot.as_ref().expect("roots are resolved above").clone()
 }
 
@@ -102,7 +162,10 @@ pub fn validate() -> Result<()> {
 pub fn startup() -> Option<String> {
     let mut problems = Vec::new();
     if let Err(error) = configured_roots() {
-        FORCE_DEFAULT.store(true, Ordering::Release);
+        if !is_portable() {
+            FORCE_DEFAULT.store(true, Ordering::Release);
+        }
+
         problems.push(open_error(&error));
     }
     match acquire_startup_lock() {
@@ -131,7 +194,10 @@ pub fn retry() -> Result<()> {
     FORCE_DEFAULT.store(false, Ordering::Release);
     *location() = None;
     if let Err(error) = configured_roots() {
-        FORCE_DEFAULT.store(true, Ordering::Release);
+        if !is_portable() {
+            FORCE_DEFAULT.store(true, Ordering::Release);
+        }
+
         remember_startup_error(Some(error.clone()));
         return Err(error);
     }
