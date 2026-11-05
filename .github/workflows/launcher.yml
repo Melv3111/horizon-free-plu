@@ -172,11 +172,31 @@ jobs:
             cp "$BIN/${{ matrix.binary }}" dist/
             if [[ "$ASSET" == *.tar.gz ]]; then
               (cd dist && tar czf "../out/$ASSET" "${{ matrix.binary }}")
-                      if [[ "$RUNNER_OS" == "Windows" && "${{ matrix.name }}" == "windows" ]]; then
+          if [[ "$RUNNER_OS" == "Windows" && "${{ matrix.name }}" == "windows" ]]; then
             cp "$BIN/${{ matrix.binary }}" out/horizon-launcher.exe
 
             mkdir -p dist/portable
+            cp "$BIN/${{ matrix.binary }}" dist/portable/horizon-launcher.exe
 
+            : > dist/portable/portable.txt
+
+            printf '%s\n' \
+              'Horizon-Free Plus Portable' \
+              '' \
+              '1. Extract this ZIP anywhere.' \
+              '2. Keep portable.txt beside horizon-launcher.exe.' \
+              '3. Run horizon-launcher.exe.' \
+              '' \
+              'Portable mode uses the portable.txt marker.' \
+              'Launcher-managed data is stored in the data folder.' \
+              > dist/portable/README-PORTABLE.txt
+
+            (
+              cd dist/portable
+              7z a "../../out/horizon-launcher-windows-x64-portable.zip" \
+                horizon-launcher.exe portable.txt README-PORTABLE.txt > /dev/null
+            )
+          fi  
             cp "$BIN/${{ matrix.binary }}" dist/portable/horizon-launcher.exe
 
             : > dist/portable/portable.txt
